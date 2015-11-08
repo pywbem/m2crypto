@@ -18,6 +18,7 @@ if sys.version_info <= (2, 6):
 
 import os  # noqa
 import platform
+import subprocess
 try:
     from setuptools import setup
     from setuptools.command import build_ext
@@ -28,6 +29,26 @@ except ImportError:
 from distutils.core import Extension
 from distutils.file_util import copy_file
 
+# @amfix@ #1 for Debian-based: Added run_command().
+def run_command(command):
+    """Execute a shell command and return stderr and stdout.
+
+    Note that the simpler to use subprocess.check_output() requires
+    Python 2.7, but we want to support Python 2.6 as well.
+
+    Parameters:
+        command: string or list of strings with the command and its paramaters.
+    Returns a tuple of:
+        command return code
+        stdout of the command
+        stderr of the command
+    If the command is not found, OSError is raised.
+    """
+    p = subprocess.Popen(command,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE)
+    stdout, stderr = p.communicate()
+    return p.returncode, stdout, stderr
 
 class _M2CryptoBuildExt(build_ext.build_ext):
     '''Specialization of build_ext to enable swig_opts to inherit any
@@ -55,11 +76,41 @@ class _M2CryptoBuildExt(build_ext.build_ext):
 
         build_ext.build_ext.finalize_options(self)
 
-        openssl_include_dir = os.path.join(self.openssl, 'include')
+        self.include_dirs.append(os.path.join(self.openssl, 'include'))
         openssl_library_dir = os.path.join(self.openssl, 'lib')
 
-        self.swig_opts = ['-I%s' % i for i in self.include_dirs +
-                          [openssl_include_dir]]
+        # @amfix@ #1 for Debian-based: Added DEB_HOST_MULTIARCH directory to SWIG include path.
+        DEB_HOST_MULTIARCH = None
+        try:
+            rc, stdout, stderr = run_command(['dpkg-architecture', '-qDEB_HOST_MULTIARCH'])
+            if rc == 0:
+                DEB_HOST_MULTIARCH = stdout.strip('\n').strip(' ')
+        except OSError: # Command not found
+            pass
+        if DEB_HOST_MULTIARCH is not None:
+            arch_include_dir = os.path.join(self.openssl, 'include', DEB_HOST_MULTIARCH)
+            if os.path.exists(arch_include_dir):
+                self.include_dirs.append(arch_include_dir)
+
+        # @amfix@ #2 for RedHat-based: Added /usr/include/openssl to SWIG include path.
+        openssl_include_dir = os.path.join(self.openssl, 'include', 'openssl')
+        if os.path.exists(openssl_include_dir):
+            self.include_dirs.append(openssl_include_dir)
+
+        # @amfix@ #2 for RedHat-based: Added normalized -D__{arch}__ to SWIG options.
+        arch = platform.machine().lower()
+        if arch in ('i386', 'i486', 'i586', 'i686'):
+            _arch = '__i386__'
+        elif arch in ('ppc64', 'powerpc64'):
+            _arch = '__powerpc64__'
+        elif arch in ('ppc', 'powerpc'):
+            _arch = '__powerpc__'
+        else:
+            _arch = '__%s__' % arch
+        self.swig_opts.append('-D%s' % _arch)
+
+        self.swig_opts.extend(['-I%s' % i for i in self.include_dirs])
+
         self.swig_opts.append('-includeall')
         self.swig_opts.append('-modern')
         self.swig_opts.append('-builtin')
@@ -72,15 +123,7 @@ class _M2CryptoBuildExt(build_ext.build_ext):
         self.swig_opts.append('-outdir')
         self.swig_opts.append(os.path.join(self.build_lib, 'M2Crypto'))
 
-        # Fedora does hat tricks.
-        if platform.linux_distribution()[0] in ['Fedora', 'CentOS']:
-            if platform.architecture()[0] == '64bit':
-                self.swig_opts.append('-D__x86_64__')
-            elif platform.architecture()[0] == '32bit':
-                self.swig_opts.append('-D__i386__')
-
-        self.include_dirs += [os.path.join(self.openssl, openssl_include_dir),
-                              os.path.join(os.getcwd(), 'SWIG')]
+        self.include_dirs += [os.path.join(os.getcwd(), 'SWIG')]
 
         if sys.platform == 'cygwin':
             # Cygwin SHOULD work (there's code in distutils), but
@@ -119,7 +162,7 @@ m2crypto = Extension(name='M2Crypto.__m2crypto',
                      )
 
 setup(name='M2Crypto',
-      version='0.22.6.rc3',
+      version='0.22.6.rc3+amfix2',
       description='M2Crypto: A Python crypto and SSL toolkit',
       long_description='''\
 M2Crypto is the most complete Python wrapper for OpenSSL featuring RSA, DSA,

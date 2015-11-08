@@ -16,8 +16,8 @@ Copyright (C) 2004-2007 OSAF. All Rights Reserved.
 Copyright 2008-2011 Heikki Toivonen. All rights reserved.
 """
 
-version_info = (0, 21, 1)
-version = '.'.join([str(_v) for _v in version_info])
+version_info = (0, 22, 6)
+version = '.'.join([str(_v) for _v in version_info]) + "-rc3" + "+amfix2"
 
 import _m2crypto
 import m2
